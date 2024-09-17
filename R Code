@@ -1,0 +1,182 @@
+---
+title: ''
+header-includes:
+- "\\usepackage{fancyhdr}"
+- "\\pagestyle{fancy}"
+- "\\fancyhead[CO,CE]{}"
+- "\\usepackage{pdflscape}"
+- "\\newcommand{\\blandscape}{\\begin{landscape}}"
+- "\\newcommand{\\elandscape}{\\end{landscape}}"
+output:
+  pdf_document: default
+  word_document: default
+geometry: left=1cm,right=1cm,top=0.8cm,bottom=0cm
+tables: true
+params:
+  player: "Doe, Jane"
+  file: "C:\\PitchingReports\\POR\\DraftLeagueData.csv"
+  dataframe: GameCSV
+---
+```{r setup, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(hrbrthemes)
+library(ggstream)
+library(ggridges)
+library(kableExtra)
+### Pitcher Post Outing MLBDL)
+GameCSV <- tryCatch({read.csv(params$file)}, 
+                    error = function(e){
+                    params$dataframe  
+                    }
+)
+Title <- paste("Post Outing Report for", params$player, GameCSV$UTCDate[1], sep = ' ')
+
+########### This filters the data down to the Pitcher in question
+GameCSV <- data.frame(GameCSV)
+PitcherData <- GameCSV %>% filter(pitcher == params$player & is.na(relspeed) == FALSE)
+PitcherData$taggedpitchtype <- ifelse(PitcherData$taggedpitchtype == 'Fastball', 'FourSeamFastBall', PitcherData$taggedpitchtype)
+View(PitcherData)
+
+
+############ Here I create the table at the top of the page. It uses 25th-75th percentile velocity and takes the mean of other metrics
+PitchByPitch <- PitcherData %>% 
+  group_by(taggedpitchtype) %>%
+  summarise(
+    "# of Pitches" = n(),
+    'Avg Velo' = paste(round(quantile(relspeed,0.25,na.rm = TRUE),digits = 0),"-",round(quantile(relspeed,0.75,na.rm = TRUE),digits = 0),sep = ""),
+    'Max Velo' = round(max(relspeed,na.rm = TRUE), digits = 0),
+    'Avg Spin Rate' = round(mean(spinrate,na.rm = TRUE),digits = 0),
+    'Max SpinRate' = max(round(spinrate, digits = 0)),
+    'Vert Break' = round(mean(inducedvertbreak,na.rm = TRUE), digits = 2),
+    'Horz Break' = round(mean(horzbreak,na.rm = TRUE), digits = 2),
+    'Whiff%' = paste0(round(mean(ifelse(pitchcall == 'StrikeSwinging', 1, 0)) * 100, digits = 2), "%"),
+    'Zone%' = paste0(round(mean(ifelse(platelocheight <= 3.5 & platelocheight >= 1.5 & platelocside >= -.83 & platelocside <= .83, 1, 0)) * 100, digits = 2), "%"),
+    'Chase%' = paste0(round(sum(ifelse((platelocheight <= 3.5 & platelocheight >= 1.5 & platelocside >= -.83 & platelocside <= .83 )| (pitchcall == 'BallCalled' | pitchcall == 'StrikeCalled'), 0, 1))/
+                sum(ifelse((platelocheight <= 3.5 & platelocheight >= 1.5 & platelocside >= -.83 & platelocside <= .83 ),0,1)) * 100, digits = 2), "%"))
+Totals <- c(
+  'Total',
+  sum(PitchByPitch$`# of Pitches`),
+  '---',
+  max(PitchByPitch$`Max Velo`),
+  '---',
+  '---',
+  '---',
+  '---',
+  round(mean(ifelse(PitcherData$pitchcall == 'StrikeSwinging', 2, 0)), digits = 1),
+  round(mean(ifelse(PitcherData$platelocheight <= 3.5 & PitcherData$platelocheight >= 1.5 & PitcherData$platelocside >= -.83 & PitcherData$platelocside <= .83, 1, 0)), digits = 2),
+  round(sum(ifelse((PitcherData$platelocheight <= 3.5 & PitcherData$platelocheight >= 1.5 & PitcherData$platelocside >= -.83 & PitcherData$platelocside <= .83 )| PitcherData$PitchCall == 'BallCalled' | PitcherData$PitchCall == 'StrikeCalled', 0, 1))/
+        sum(ifelse((PitcherData$platelocheight <= 3.5 & PitcherData$platelocheight >= 1.5 & PitcherData$platelocside >= -.83 & PitcherData$platelocside <= .83 ),0,1)), digits = 2)
+  
+)
+############# This combines the Total row with the other rows
+PitchByPitch <- rbind(PitchByPitch, Totals)
+PitchByPitch <- PitchByPitch %>% rename(Pitch = taggedpitchtype)
+  
+########## This creates a pie chart for pitch selection
+PitchSelection = ggplot(data = PitcherData, aes(x = '', y = taggedpitchtype, fill = ((taggedpitchtype))))+
+  scale_fill_manual(values = c('FourSeamFastBall' = "red", 'Cutter' = 'maroon', "TwoSeamFastBall" = 'orange2', 'Sinker' = 'orange2', 'Splitter' = 'skyblue', 
+                     'Curveball' = 'blue3', 'ChangeUp' = 'forestgreen', 'Slider' = 'yellow2'))+
+  geom_bar(stat = 'identity', width = 100/nrow(PitchByPitch))+
+  coord_polar('y', start = 0)+
+#  geom_segment(inherit.aes = F, aes(x=0,y=1,xend=nrow(GameCSV),yend=1),color='black')+
+  theme_void()+
+  labs(fill = "Pitch Types")+
+  guides(color = 'none', title = "Pitch Selection")
+########## This is the movement plot
+BreakPlot = ggplot(PitcherData, aes(x = horzbreak, y = inducedvertbreak, color = as.factor(taggedpitchtype)))+
+  scale_color_manual(values = c( 'FourSeamFastBall' = "red", 'Cutter' = 'maroon', "TwoSeamFastBall" = 'orange2', 'Sinker' = 'orange2', 'Splitter' = 'skyblue', 
+                    'Curveball' = 'blue3', 'ChangeUp' = 'forestgreen', 'Slider' = 'yellow2'))+
+  geom_point()+
+  scale_x_continuous(limits = c(-25,25))+
+  geom_hline(yintercept = 0)+
+  geom_vline(xintercept = 0)+
+  scale_y_continuous(limits = c(-25,25))+
+  labs(color = "Pitch Types", title = "Break Plot")
+########## The velocity bar chart
+PitchVelos = ggplot(PitcherData, aes(x = round(relspeed, digits = 1), fill = as.factor(taggedpitchtype)))+
+  scale_fill_manual(values = c( 'FourSeamFastBall' = "red", 'Cutter' = 'maroon', "TwoSeamFastBall" = 'orange2', 'Sinker' = 'orange2', 'Splitter' = 'skyblue', 
+                    'Curveball' = 'blue3', 'ChangeUp' = 'forestgreen', 'Slider' = 'yellow2'))+
+  geom_bar(stat = 'bin',binwidth = .5, width = 1, color = 'black')+
+  labs(fill = "Pitch Types", x = 'Pitch Velocity', y = 'Frequency', title = "Pitch Velocity")
+########## This creates the visual for the strike zone and the heart of the plate for location plots
+Zone <- data.frame(x = c(-.83,.83,.83,-.83), y = c(1.5,1.5,3.5,3.5))
+Heart <- data.frame(x = c(-.6,.6,.6,-.6), y = c(1.8,1.8,3.2,3.2))
+LocationPlot = ggplot(PitcherData, aes(x = platelocside, y = platelocheight, color = as.factor(taggedpitchtype)))+
+  scale_color_manual(values = c( 'FourSeamFastBall' = "red", 'Cutter' = 'maroon', "TwoSeamFastBall" = 'orange2', 'Sinker' = 'orange2', 'Splitter' = 'skyblue', 
+                    'Curveball' = 'blue3', 'ChangeUp' = 'forestgreen', 'Slider' = 'yellow2'))+
+  geom_polygon(data = Zone, inherit.aes = F,aes(x=x,y=y), color = 'black', fill = 'transparent')+
+  geom_polygon(data = Heart, inherit.aes = F,aes(x=x,y=y), color = 'black', fill = 'transparent', linetype = 'dashed')+
+  geom_point()+
+  geom_segment(aes(x = -0.708, y = 0.15, xend = 0.708, yend = 0.15), size = 0.5, color = "black") +
+  geom_segment(aes(x = -0.708, y = 0.3, xend = -0.708, yend = 0.15), size = 0.5, color = "black") +
+  geom_segment(aes(x = -0.708, y = 0.3, xend = 0, yend = 0.5), size = 0.5, color = "black") +
+  geom_segment(aes(x = 0, y = 0.5, xend = 0.708, yend = 0.3), size = 0.5, color = "black") +
+  geom_segment(aes(x = 0.708, y = 0.3, xend = 0.708, yend = 0.15), size = 0.5, color = "black") +
+  scale_x_continuous(limits = c(-2,2)) +
+  scale_y_continuous(limits = c(0,5)) +
+  labs(color = "Pitch Types", title = "Pitch Locations")
+ResultPlot = ggplot(PitcherData, aes(x = platelocside, y = platelocheight, color = as.factor(pitchcall)))+
+  scale_color_manual(values = c( 'FourSeamFastBall' = "red", 'Cutter' = 'maroon', "TwoSeamFastBall" = 'orange2', 'Sinker' = 'orange2', 'Splitter' = 'skyblue', 
+                    'Curveball' = 'blue3', 'ChangeUp' = 'forestgreen', 'Slider' = 'yellow2'))+
+  geom_polygon(data = Zone, inherit.aes = F,aes(x=x,y=y), color = 'black', fill = 'transparent')+
+  geom_polygon(data = Heart, inherit.aes = F,aes(x=x,y=y), color = 'black', fill = 'transparent', linetype = 'dashed')+
+  geom_point()+
+  geom_segment(aes(x = -0.708, y = 0.15, xend = 0.708, yend = 0.15), size = 0.5, color = "black") +
+  geom_segment(aes(x = -0.708, y = 0.3, xend = -0.708, yend = 0.15), size = 0.5, color = "black") +
+  geom_segment(aes(x = -0.708, y = 0.3, xend = 0, yend = 0.5), size = 0.5, color = "black") +
+  geom_segment(aes(x = 0, y = 0.5, xend = 0.708, yend = 0.3), size = 0.5, color = "black") +
+  geom_segment(aes(x = 0.708, y = 0.3, xend = 0.708, yend = 0.15), size = 0.5, color = "black") +
+  scale_x_continuous(limits = c(-2,2)) +
+  scale_y_continuous(limits = c(0,5)) +
+  labs(color = "Pitch Result", title = 'Pitch Results')
+######### This converts tilt to something that a plot can be created from
+PitcherData$Minute=0.01*as.numeric(sub(":", "", sub(":00", "", sub("0-01-01 ","",PitcherData$tilt))))
+PitcherData$Minute <-  sub(".15", ".25", PitcherData$Minute)
+PitcherData$Minute <-  sub(".3", ".5", PitcherData$Minute)
+PitcherData$Minute <-  sub(".45", ".75", PitcherData$Minute)
+PitcherData$Minute <- as.numeric(ifelse(PitcherData$Minute == "12.25", ".25",
+       ifelse(PitcherData$Minute == "12.5"|PitcherData$Minute == "12.50", ".5",
+              ifelse(PitcherData$Minute == "12.75", ".75", PitcherData$Minute))))
+  
+TiltPlot = ggplot(PitcherData, aes(x = Minute, fill = as.factor(taggedpitchtype)))+
+  scale_fill_manual(values = c( 'FourSeamFastBall' = "red", 'Cutter' = 'maroon', "TwoSeamFastBall" = 'orange2', 'Sinker' = 'orange2', 'Splitter' = 'skyblue', 
+                    'Curveball' = 'blue3', 'ChangeUp' = 'forestgreen', 'Slider' = 'yellow2'))+
+  geom_bar(stat = 'bin',binwidth = .25, color = 'black')+
+  coord_polar('x', start = 0, direction = 1)+
+  geom_segment(inherit.aes = F, aes(x=0,y=1,xend=12,yend=1),color='black')+
+  labs(fill = 'Pitch Type', x = '', y = 'Count', title = "Tilt Plot")
+
+## Release Point Plot Creation
+releasePlot = ggplot(PitcherData, aes(x = -relside, y = relheight, color = taggedpitchtype))+
+  scale_color_manual(values = c( 'FourSeamFastBall' = "red", 'Cutter' = 'maroon', "TwoSeamFastBall" = 'orange2', 'Sinker' = 'orange2', 'Splitter' = 'skyblue', 
+                    'Curveball' = 'blue3', 'ChangeUp' = 'forestgreen', 'Slider' = 'yellow2'))+
+  geom_point()+
+  scale_x_continuous(limits = c(-4,4)) +
+  scale_y_continuous(limits = c(4,6.5)) +
+  labs(title = 'Release Point', x = "Release Side", y = "Release Height")
+```
+*`r Title`*
+```{r, echo=FALSE, warning=FALSE,results = 'asis',fig.width=8,warning=FALSE,error=FALSE}
+## The rest of the code just prints the tables and plots
+PitchByPitch %>%
+  kbl(format="latex", digits = 3, caption = "Individual Pitch Summary", booktabs = "T") %>%
+   kable_styling(latex_options = "hold_position", full_width = FALSE, font_size = 8)
+```
+```{r, echo=FALSE, warning=FALSE,results = 'asis',fig.width=8,warning=FALSE,error=FALSE, out.width = '50%', out.height= '50%'}
+PitchSelection
+PitchVelos
+```
+```{r, echo=FALSE, warning=FALSE,results = 'asis',fig.width=8,warning=FALSE,error=FALSE, out.width = '50%', out.height= '50%'}
+BreakPlot
+TiltPlot
+```
+```{r, echo=FALSE, warning=FALSE,results = 'asis',fig.width=8,warning=FALSE,error=FALSE, out.width = '50%', out.height= '50%'}
+LocationPlot
+#ResultPlot
+releasePlot
+```
+```{r, echo=FALSE, warning=FALSE,results = 'asis',fig.width=8,warning=FALSE,error=FALSE}
+```
